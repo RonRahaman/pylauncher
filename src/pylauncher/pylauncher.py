@@ -89,6 +89,7 @@ import stat
 import subprocess
 import sys
 import time
+from typing import Any, Union
 from pylauncher import hostlist3 as hs
 
 class LauncherException(Exception):
@@ -1598,7 +1599,7 @@ def JobId():
     elif hostname in ["ls5","ls6","maverick","stampede","stampede2","stampede2-knl","stampede2-skx"]:
         return os.environ["SLURM_JOB_ID"]
     elif hostname in ["pace"]:
-        return os.environ["PBS_JOBID"]
+        return os.environ["SLURM_JOB_ID"]
     else:
         return None
 
@@ -1640,7 +1641,7 @@ def HostListByName(**kwargs):
     elif cluster=="mic":
         hostlist = HostList( ["localhost" for i in range(60)] )
     elif cluster in ['pace']:
-        return PBSHostList(**kwargs)
+        return SLURMHostList(**kwargs)
     else:
         hostlist = HostList(hostlist=[HostName()])
     if debug:
@@ -2780,6 +2781,45 @@ class MPIExecutor(Executor):
             self.popen_object.terminate()
 
 
+class SrunExecutor(Executor):
+
+    def __init__(self, mem_per_cpu: str = "", cpus_per_task: int = 1, hfswitch: str = "--nodefile", debug: str = "", workdir: str = None, force_workdir: bool = False):
+        # TODO: Test to see if this is read correctly from env
+        if not mem_per_cpu:
+            mem_per_cpu = os.env["SLURM_MEM_PER_CPU"]
+        self.mem_per_cpu: int = mem_per_cpu
+        self.cpus_per_task: int = cpus_per_task
+        self.hfswitch : str = hfswitch
+        self.popen_object : Union[None, subprocess.Popen] = None
+        super().__init__(catch_output=False, debug=debug, workdir=workdir, force_workdir=force_workdir)
+
+    def execute(self, command: str, pool: HostLocator, stdout : Any = subprocess.PIPE):
+        # Using set instead of list, since srun doesn't appear to like duplicates in nodelist
+        machinelist = set()
+        for i in range(int(pool.offset), int(pool.offset) + int(pool.extent)):
+            machinelist.add(pool.pool.nodes[i].hostname)
+
+        hfname = 'hostfile.'
+        hfnumber = 0
+        while True:
+            hfpath = os.path.join(self.workdir, f"{hfname}{hfnumber}")
+            if not os.path.exists(hfpath):
+                break
+            hfnumber += 1
+        with open(hfpath, 'w') as hf:
+            for machine in machinelist:
+                hf.write(machine+'\n')
+
+        wrapped_command = self.wrap(command)
+        full_commandline = f"srun -n {pool.extent} -c {self.cpus_per_task} --mem-per-cpu={self.mem_per_cpu} {self.hfswitch}={hfpath} {wrapped_command}" 
+        DebugTraceMsg(f"executed commandline: <<{full_commandline}>>", self.debug, prefix="Exec")
+
+        self.popen_object = subprocess.Popen(full_commandline, shell=True, stdout=stdout)
+
+    def terminate(self):
+        if self.popen_object is not None:
+            self.popen_object.terminate()
+
 
 class IbrunExecutor(Executor):
     """An Executor derived class for the shift/offset version of ibrun
@@ -3680,6 +3720,28 @@ def MPILauncher(commandfile,**kwargs):
         debug=debug,**kwargs)
     job.run()
     print(job.final_report(),flush=True)
+
+
+def SrunLauncher(commandfile: str, mem_per_cpu: "", debug: str = "", workdir: str = None, 
+        cores: Union[int, str] = 1, delay: float = 0.5, maxruntime: int = 0, hfswitch: str = "--nodefile"):
+    jobid = JobId()
+    if workdir is None:
+        workdir = f"pylauncher_tmp{jobid}"
+
+    executor = SrunExecutor(mem_per_cpu=mem_per_cpu, workdir=workdir, debug=debug, hfswitch=hfswitch)
+    print(">>> Got executor")
+    hostpool = HostPool(hostlist=HostListByName(), commandexecutor=executor, debug=debug)
+    print(">>> Got hostpool")
+    commandlines = FileCommandlineGenerator(commandfile, cores=cores, debug=debug)
+    print(">>> Got commandlines")
+    completion = lambda x: FileCompletion(taskid=x, stamproot="expire", stampdir=workdir)
+    print(">>> Got completion")
+    taskgenerator = TaskGenerator(commandlines=commandlines, completion=completion, debug=debug)
+    print(">>> Got taskgenerator")
+    job = LauncherJob(hostpool=hostpool, taskgenerator=taskgenerator, debug=debug, delay=delay, maxruntime=maxruntime)
+    job.run()
+    print(job.final_report(), flush=True)
+
 
 def IbrunLauncher(commandfile,**kwargs):
     """A LauncherJob for a file of small MPI jobs.
