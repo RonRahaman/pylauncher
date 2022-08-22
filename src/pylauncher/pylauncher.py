@@ -2782,8 +2782,16 @@ class MPIExecutor(Executor):
 
 
 class SrunExecutor(Executor):
+    """ An Executor for running one task with `srun`
 
-    def __init__(self, mem_per_cpu: str = "", cpus_per_task: int = 1, hfswitch: str = "--nodefile", debug: str = "", workdir: str = None, force_workdir: bool = False):
+    :param mem_per_cpu: Memory per CPU. Accepted units are [K|M|G|T].  Default: SLURM_MEM_PER_CPU env variable
+    :param cpus_per_task: Number of CPUs per task
+    :param hfswitch: Flag used to pass hostfile (or nodefile) to `srun`.
+    :param debug: Debug types, specified in space-separated string
+    :param workdir: Directory for output and temporary files
+    """
+    def __init__(self, mem_per_cpu: str = "", cpus_per_task: int = 1, hfswitch: str = "--nodefile",
+                 debug: str = "", workdir: str = None):
         # TODO: Test to see if this is read correctly from env
         if not mem_per_cpu:
             mem_per_cpu = os.env["SLURM_MEM_PER_CPU"]
@@ -2791,9 +2799,15 @@ class SrunExecutor(Executor):
         self.cpus_per_task: int = cpus_per_task
         self.hfswitch : str = hfswitch
         self.popen_object : Union[None, subprocess.Popen] = None
-        super().__init__(catch_output=False, debug=debug, workdir=workdir, force_workdir=force_workdir)
+        super().__init__(catch_output=False, debug=debug, workdir=workdir)
 
     def execute(self, command: str, pool: HostLocator, stdout : Any = subprocess.PIPE):
+        """ Execute a command on a given set of hosts using srun
+
+        :param command: The command to run
+        :param pool: The HostLocator used to find a set of hosts to run on
+        :param stdout: file descriptor used for stdout. Default: use current stdout
+        """
         # Using set instead of list, since srun doesn't appear to like duplicates in nodelist
         machinelist = set()
         for i in range(int(pool.offset), int(pool.offset) + int(pool.extent)):
@@ -2817,6 +2831,7 @@ class SrunExecutor(Executor):
         self.popen_object = subprocess.Popen(full_commandline, shell=True, stdout=stdout)
 
     def terminate(self):
+        """ Terminate a running task """
         if self.popen_object is not None:
             self.popen_object.terminate()
 
@@ -3722,22 +3737,29 @@ def MPILauncher(commandfile,**kwargs):
     print(job.final_report(),flush=True)
 
 
-def SrunLauncher(commandfile: str, mem_per_cpu: "", debug: str = "", workdir: str = None, 
-        cores: Union[int, str] = 1, delay: float = 0.5, maxruntime: int = 0, hfswitch: str = "--nodefile"):
+def SrunLauncher(commandfile: str, mem_per_cpu: "", debug: str = "", workdir: str = None, cores: Union[int, str] = 1,
+                 delay: float = 0.5, maxruntime: int = 0, hfswitch: str = "--nodefile"):
+    """ A LauncherJob for running MPI jobs on Slurm with `srun`
+
+    :param commandfile: Name of file with commandlines
+    :param mem_per_cpu: Memory per CPU. Accepted units are [K|M|G|T]
+    :param debug: Debug types, specified in space-separated string
+    :param workdir: Directory for output and temporary files.  Default: pylauncher_tmp<jobid>
+    :param cores: Number of cores for each tasks. Specify "file" to use core counts from commandfile
+    :param delay: Number of seconds to sleep after each task completes
+    :param maxruntime: Maximum runtime. Specify 0 to set no runtime limit in pylaucner
+    :param hfswitch: Flag used to pass hostfile (or nodefile) to `srun`.
+    """
+
     jobid = JobId()
     if workdir is None:
         workdir = f"pylauncher_tmp{jobid}"
 
     executor = SrunExecutor(mem_per_cpu=mem_per_cpu, workdir=workdir, debug=debug, hfswitch=hfswitch)
-    print(">>> Got executor")
     hostpool = HostPool(hostlist=HostListByName(), commandexecutor=executor, debug=debug)
-    print(">>> Got hostpool")
     commandlines = FileCommandlineGenerator(commandfile, cores=cores, debug=debug)
-    print(">>> Got commandlines")
     completion = lambda x: FileCompletion(taskid=x, stamproot="expire", stampdir=workdir)
-    print(">>> Got completion")
     taskgenerator = TaskGenerator(commandlines=commandlines, completion=completion, debug=debug)
-    print(">>> Got taskgenerator")
     job = LauncherJob(hostpool=hostpool, taskgenerator=taskgenerator, debug=debug, delay=delay, maxruntime=maxruntime)
     job.run()
     print(job.final_report(), flush=True)
