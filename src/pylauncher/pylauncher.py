@@ -2794,7 +2794,7 @@ class SrunExecutor(Executor):
                  debug: str = "", workdir: str = None):
         # TODO: Test to see if this is read correctly from env
         if not mem_per_cpu:
-            mem_per_cpu = os.env["SLURM_MEM_PER_CPU"]
+            mem_per_cpu = os.environ["SLURM_MEM_PER_CPU"]
         self.mem_per_cpu: int = mem_per_cpu
         self.cpus_per_task: int = cpus_per_task
         self.hfswitch : str = hfswitch
@@ -3737,7 +3737,7 @@ def MPILauncher(commandfile,**kwargs):
     print(job.final_report(),flush=True)
 
 
-def SrunLauncher(commandfile: str, mem_per_cpu: "", debug: str = "", workdir: str = None, cores: Union[int, str] = 1,
+def SrunLauncher(commandfile: str, mem_per_cpu: str = "", debug: str = "", workdir: str = None, cores: Union[int, str] = 1,
                  delay: float = 0.5, maxruntime: int = 0, hfswitch: str = "--nodefile"):
     """ A LauncherJob for running MPI jobs on Slurm with `srun`
 
