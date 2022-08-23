@@ -2792,10 +2792,9 @@ class SrunExecutor(Executor):
     """
     def __init__(self, mem_per_cpu: str = "", cpus_per_task: int = 1, hfswitch: str = "--nodefile",
                  debug: str = "", workdir: str = None):
-        # TODO: Test to see if this is read correctly from env
         if not mem_per_cpu:
             mem_per_cpu = os.environ["SLURM_MEM_PER_CPU"]
-        self.mem_per_cpu: int = mem_per_cpu
+        self.mem_per_cpu: str = mem_per_cpu
         self.cpus_per_task: int = cpus_per_task
         self.hfswitch : str = hfswitch
         self.popen_object : Union[None, subprocess.Popen] = None
